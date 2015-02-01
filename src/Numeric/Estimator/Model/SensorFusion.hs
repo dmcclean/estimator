@@ -70,6 +70,7 @@ data StateVector a = StateVector
     , stateWind :: !(NED a) -- ^ NED wind velocity - m/sec
     , stateMagNED :: !(NED a) -- ^ NED earth fixed magnetic field components - milligauss
     , stateMagXYZ :: !(XYZ a) -- ^ XYZ body fixed magnetic field measurements - milligauss
+    , stateQNH :: !a -- ^ Local sea level pressure - Pa
     }
     deriving Show
 
@@ -85,6 +86,7 @@ instance Applicative StateVector where
         , stateWind = pure v
         , stateMagNED = pure v
         , stateMagXYZ = pure v
+        , stateQNH = v
         }
     v1 <*> v2 = StateVector
         { stateOrient = stateOrient v1 <*> stateOrient v2
@@ -94,6 +96,7 @@ instance Applicative StateVector where
         , stateWind = stateWind v1 <*> stateWind v2
         , stateMagNED = stateMagNED v1 <*> stateMagNED v2
         , stateMagXYZ = stateMagXYZ v1 <*> stateMagXYZ v2
+        , stateQNH = stateQNH v1 $ stateQNH v2
         }
 
 instance Functor StateVector where
@@ -111,6 +114,7 @@ instance Traversable StateVector where
         <*> sequenceA (stateWind v)
         <*> sequenceA (stateMagNED v)
         <*> sequenceA (stateMagXYZ v)
+        <*> (stateQNH v)
 
 instance Distributive StateVector where
     distribute f = StateVector
@@ -121,6 +125,7 @@ instance Distributive StateVector where
         , stateWind = distribute $ fmap stateWind f
         , stateMagNED = distribute $ fmap stateMagNED f
         , stateMagXYZ = distribute $ fmap stateMagXYZ f
+        , stateQNH = fmap stateQNH f
         }
 
 -- | Define the control (disturbance) vector. Error growth in the inertial
@@ -172,6 +177,7 @@ initCovariance = scaled $ fmap (^ (2 :: Int)) $ StateVector
     , stateWind = pure 8
     , stateMagNED = pure 0.02
     , stateMagXYZ = pure 0.02
+    , stateQNH = 1e6
     }
     where
     deg2rad = realToFrac (pi :: Double) / 180
@@ -232,6 +238,7 @@ initDynamic accel mag magBias declination vel pos = (pure 0)
     , statePos = pos
     , stateMagNED = initMagNED
     , stateMagXYZ = magBias
+    , stateQNH = heightToPressure 0
     }
     where
     initMagXYZ = mag - magBias
@@ -275,7 +282,10 @@ processModel dt (AugmentState state dist) = AugmentState state' $ pure 0
 -- | Compute the local air pressure from the state vector. Useful as a
 -- measurement model for a pressure sensor.
 statePressure :: Floating a => StateVector a -> a
-statePressure = heightToPressure . negate . (^._z) . nedToVec3 . statePos
+statePressure state = heightToPressure (alt + pressureToHeight qnh)
+  where
+    alt = negate . (^._z) . nedToVec3 . statePos $ state
+    qnh = stateQNH state
 
 -- | Compute the true air-speed of the sensor platform. Useful as a
 -- measurement model for a true air-speed sensor.
